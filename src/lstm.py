@@ -13,6 +13,8 @@ import torch.autograd as autograd
 
 import torch.optim as optim
 
+import pandas as pd
+
 from logging import (getLogger, Formatter, StreamHandler, INFO)
 
 logger = getLogger(__name__)
@@ -22,8 +24,7 @@ logger.addHandler(sh)
 fmtr = Formatter('%(asctime)s:%(lineno)d:%(levelname)s:%(message)s')
 sh.setFormatter(fmtr)
 
-MAX_LENGTH = 5
-TRAINING_ITER = 4
+MAX_LENGTH = 200
 
 
 class LSTM(nn.Module):
@@ -77,8 +78,10 @@ def target_tensor(input_idxs, eof_idx):
     return autograd.Variable(tensor)
 
 
-def main():
+def main(to_csv_path, train_obj, training_iter=10, sample_size=None):
     """Main function."""
+    training_iter = int(training_iter)
+
     def _generate(start_letter):
         sample_char_idx = [char2idx[start_letter]]
         logger.debug('sample_char_idx: ', sample_char_idx)
@@ -106,17 +109,25 @@ def main():
         for start_letter in start_letters:
             print(_generate(start_letter))
 
-    with open('../input/pseudo-personal-infomation.csv') as f:
-        reader = csv.reader(f)
-        reader.__next__()  # skip header
-        first_names = [row[2] for row in reader]  # list of first name
-    all_char_set = set([char for first_name in first_names for char in first_name])
+    df = pd.read_csv(to_csv_path)
+    text_for_train = df[train_obj].unique()
+    all_char_set = set([chr(i) for i in range(ord('a'), ord('z') + 1)]
+                       + [chr(i) for i in range(0x30a1, 0x30f5)]
+                       + ['0', '@', '!', '%', '?', '、', '。', '・', '.', 'ー', '/', '【', '】',
+                          '+', '-', '{', '}', '=', '(', ')', ':'])
+
+    print(all_char_set)
     char2idx = {char: i for i, char in enumerate(all_char_set)}
     char2idx['EOS'] = len(char2idx)
 
     idx2char = {v: k for k, v in char2idx.items()}
 
-    names_idxs = [[char2idx[char] for char in name_str] for name_str in first_names]
+    if sample_size is None:
+        names_idxs = [[char2idx[char] for char in name_str] for name_str in text_for_train]
+    else:
+        names_idxs = [[char2idx[char] for char in name_str] for name_str in text_for_train[:int(sample_size)]]
+
+    print(len(names_idxs))
 
     # build model
     model = LSTM(input_dim=len(char2idx), embed_dim=100, hidden_dim=128)
@@ -124,7 +135,7 @@ def main():
     criterion = nn.NLLLoss()
     optimizer = optim.RMSprop(model.parameters(), lr=0.001)
 
-    for itr in range(TRAINING_ITER + 1):
+    for itr in range(training_iter + 1):
         random.shuffle(names_idxs)
         total_loss = 0
 
@@ -135,13 +146,16 @@ def main():
             loss = train(model, criterion, input_, target)
             total_loss += loss
 
+            if not (i % 100):
+                print('step: {}'.format(i))
+
             optimizer.step()
 
-        print(itr, '/', TRAINING_ITER)
+        print(itr, '/', training_iter)
         print('loss {:.4f}'.format(float(total_loss / len(names_idxs))))
 
-    generate(u'アイウエオカキクケコサシスセソタチツテト')
+    generate([chr(i) for i in range(0x30a1, 0x30f5)])
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    sys.exit(main(*sys.argv[1:]))
